@@ -62,6 +62,7 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const ttsAudioContextRef = useRef<AudioContext | null>(null);
   
   // Refs to track current state for use in callbacks (avoid stale closures)
   const isListeningRef = useRef(isListening);
@@ -89,6 +90,12 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
         audioContextRef.current.close();
         audioContextRef.current = null;
       }
+      if (ttsAudioContextRef.current) {
+        ttsAudioContextRef.current.close().catch(() => {
+          // Ignore errors during cleanup
+        });
+        ttsAudioContextRef.current = null;
+      }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
@@ -112,7 +119,7 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
     
     setAudioLevel(normalizedLevel);
     animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
-  }, [isListening]);
+  }, []);
 
   // STT API call - transcribe audio blob via backend
   const transcribeAudio = useCallback(async (audioBlob: Blob): Promise<string> => {
@@ -215,6 +222,13 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
 
       // Set up audio context for level monitoring
       audioContextRef.current = new AudioContext({ sampleRate: mergedConfig.sampleRateIn });
+      const actualSampleRate = audioContextRef.current.sampleRate;
+      if (mergedConfig.sampleRateIn && actualSampleRate !== mergedConfig.sampleRateIn) {
+        console.warn(
+          `Requested input sample rate ${mergedConfig.sampleRateIn} Hz, ` +
+          `but AudioContext is using ${actualSampleRate} Hz.`
+        );
+      }
       const source = audioContextRef.current.createMediaStreamSource(stream);
       analyserRef.current = audioContextRef.current.createAnalyser();
       analyserRef.current.fftSize = 256;
@@ -308,34 +322,46 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
   const speak = useCallback(async (text: string, lang: string = 'ar-SA') => {
     setIsSpeaking(true);
     
+    // Close any existing TTS audio context to prevent resource exhaustion
+    if (ttsAudioContextRef.current) {
+      ttsAudioContextRef.current.close().catch(() => {
+        // Ignore errors during cleanup
+      });
+      ttsAudioContextRef.current = null;
+    }
+    
     // Try backend TTS first for better quality
     let backendSucceeded = false;
-    let audioContext: AudioContext | null = null;
     
     try {
       const audioBuffer = await synthesizeSpeech(text);
-      audioContext = new AudioContext();
+      const audioContext = new AudioContext();
+      ttsAudioContextRef.current = audioContext;
+      
       const decodedAudio = await audioContext.decodeAudioData(audioBuffer);
       const source = audioContext.createBufferSource();
       source.buffer = decodedAudio;
       source.connect(audioContext.destination);
       
       // Store reference for cleanup in onended callback
-      const ctx = audioContext;
       source.onended = () => {
         setIsSpeaking(false);
-        ctx.close().catch(() => {
-          // Ignore errors during close
-        });
+        if (ttsAudioContextRef.current === audioContext) {
+          audioContext.close().catch(() => {
+            // Ignore errors during close
+          });
+          ttsAudioContextRef.current = null;
+        }
       };
       source.start(0);
       backendSucceeded = true;
     } catch (backendError) {
       // Clean up audio context if backend TTS failed
-      if (audioContext) {
-        audioContext.close().catch(() => {
+      if (ttsAudioContextRef.current) {
+        ttsAudioContextRef.current.close().catch(() => {
           // Ignore errors during cleanup
         });
+        ttsAudioContextRef.current = null;
       }
       console.warn('Backend TTS failed, falling back to browser TTS:', backendError);
     }

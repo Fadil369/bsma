@@ -29,6 +29,7 @@ export const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const isShuttingDownRef = useRef(false);
   
   // Refs to track current state for use in callbacks (avoid stale closures)
   const isListeningRef = useRef(isListening);
@@ -147,6 +148,10 @@ export const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
       };
 
       recognition.onend = () => {
+        // Don't restart if shutdown is in progress
+        if (isShuttingDownRef.current) {
+          return;
+        }
         // Auto-restart if still supposed to be listening (use refs to avoid stale closures)
         if (isListeningRef.current && connectionStatusRef.current === 'active') {
           try {
@@ -160,6 +165,7 @@ export const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
         }
       };
 
+      isShuttingDownRef.current = false;
       recognition.start();
       recognitionRef.current = recognition;
     } catch (err) {
@@ -171,6 +177,9 @@ export const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
   };
 
   const handleStop = () => {
+    // Set shutdown flag to prevent race condition with onend handler
+    isShuttingDownRef.current = true;
+    
     // Stop speech recognition
     if (recognitionRef.current) {
       recognitionRef.current.stop();
