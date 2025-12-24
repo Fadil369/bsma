@@ -12,6 +12,21 @@ export interface TTSOptions {
   format?: 'wav' | 'mp3' | 'mulaw' | 'pcm';
 }
 
+// Helper function to extract detailed error message from response
+async function extractErrorMessage(res: Response, fallbackPrefix: string): Promise<string> {
+  try {
+    const contentType = res.headers.get('content-type');
+    if (contentType?.includes('application/json')) {
+      const errorData = await res.json();
+      return errorData.message || errorData.error || `${fallbackPrefix}: ${res.statusText}`;
+    }
+    const textError = await res.text();
+    return textError || `${fallbackPrefix}: ${res.statusText}`;
+  } catch {
+    return `${fallbackPrefix}: ${res.statusText}`;
+  }
+}
+
 export const api = {
   // Speech-to-Text: transcribe audio
   transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/wav'): Promise<STTResult> => {
@@ -21,7 +36,8 @@ export const api = {
       body: JSON.stringify({ audioBase64, mimeType }),
     });
     if (!res.ok) {
-      throw new Error(`STT failed: ${res.statusText}`);
+      const errorMessage = await extractErrorMessage(res, 'STT failed');
+      throw new Error(errorMessage);
     }
     return res.json();
   },
@@ -38,7 +54,8 @@ export const api = {
       }),
     });
     if (!res.ok) {
-      throw new Error(`TTS failed: ${res.statusText}`);
+      const errorMessage = await extractErrorMessage(res, 'TTS failed');
+      throw new Error(errorMessage);
     }
     return res.blob();
   },

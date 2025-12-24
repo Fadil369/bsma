@@ -53,7 +53,7 @@ class CallHandler {
   private callStartTime: number = Date.now();
   private connections: Set<WebSocket> = new Set();
   private aiService: AIService;
-  private meta: { rid: string; ip: string; ua: string } = { rid: '', ip: '', ua: '' };
+  private meta: { rid: string; ip: string; ua: string } = { rid: 'unknown', ip: 'unknown', ua: 'unknown' };
 
   constructor(private env: Env) {
     this.aiService = new AIService(env.ANTHROPIC_API_KEY);

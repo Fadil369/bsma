@@ -112,7 +112,7 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
     
     setAudioLevel(normalizedLevel);
     animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
-  }, []);
+  }, [isListening]);
 
   // STT API call - transcribe audio blob via backend
   const transcribeAudio = useCallback(async (audioBlob: Blob): Promise<string> => {
@@ -121,11 +121,16 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
       const bytes = new Uint8Array(arrayBuffer);
       
       // Use chunked base64 encoding for better performance with large audio files
+      // Loop approach avoids call stack issues with large arrays
       let base64 = '';
       const chunkSize = 32768; // Process 32KB at a time
       for (let i = 0; i < bytes.length; i += chunkSize) {
         const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-        base64 += String.fromCharCode.apply(null, Array.from(chunk));
+        let chunkStr = '';
+        for (let j = 0; j < chunk.length; j++) {
+          chunkStr += String.fromCharCode(chunk[j]);
+        }
+        base64 += chunkStr;
       }
       base64 = btoa(base64);
 
@@ -270,7 +275,7 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
       setIsListening(false);
       console.error('Start listening error:', err);
     }
-  }, [mergedConfig, isListening, connectionState, updateAudioLevel]);
+  }, [mergedConfig, updateAudioLevel]);
 
   // Stop listening
   const stopListening = useCallback(() => {
@@ -301,58 +306,42 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
 
   // Speak text using browser TTS or backend TTS
   const speak = useCallback(async (text: string, lang: string = 'ar-SA') => {
+    setIsSpeaking(true);
+    
+    // Try backend TTS first for better quality
+    let backendSucceeded = false;
+    let audioContext: AudioContext | null = null;
+    
     try {
-      setIsSpeaking(true);
+      const audioBuffer = await synthesizeSpeech(text);
+      audioContext = new AudioContext();
+      const decodedAudio = await audioContext.decodeAudioData(audioBuffer);
+      const source = audioContext.createBufferSource();
+      source.buffer = decodedAudio;
+      source.connect(audioContext.destination);
       
-      // Try backend TTS first for better quality
-      try {
-        const audioBuffer = await synthesizeSpeech(text);
-        let audioContext: AudioContext | null = null;
-        try {
-          audioContext = new AudioContext();
-          const decodedAudio = await audioContext.decodeAudioData(audioBuffer);
-          const source = audioContext.createBufferSource();
-          source.buffer = decodedAudio;
-          source.connect(audioContext.destination);
-          source.onended = () => {
-            setIsSpeaking(false);
-            if (audioContext) {
-              audioContext.close();
-            }
-          };
-          source.start(0);
-          return;
-        } finally {
-          // If playback did not start (e.g., an error occurred before source.start),
-          // ensure we don't leak the AudioContext. It will be closed in onended on success.
-          // We only close here if source.start was never reached; in that case onended
-          // will never fire.
-          if (audioContext && audioContext.state === 'closed') {
-            // Already closed in onended or elsewhere.
-          }
-        }
-              audioContext = null;
-            }
-          };
-          source.start(0);
-          return;
-        } catch (backendError) {
-          if (audioContext) {
-            try {
-              audioContext.close();
-            } catch {
-              // Ignore errors while closing the audio context during cleanup
-            } finally {
-              audioContext = null;
-            }
-          }
-          throw backendError;
-        }
-      } catch (backendError) {
-        console.warn('Backend TTS failed, falling back to browser TTS:', backendError);
+      // Store reference for cleanup in onended callback
+      const ctx = audioContext;
+      source.onended = () => {
+        setIsSpeaking(false);
+        ctx.close().catch(() => {
+          // Ignore errors during close
+        });
+      };
+      source.start(0);
+      backendSucceeded = true;
+    } catch (backendError) {
+      // Clean up audio context if backend TTS failed
+      if (audioContext) {
+        audioContext.close().catch(() => {
+          // Ignore errors during cleanup
+        });
       }
+      console.warn('Backend TTS failed, falling back to browser TTS:', backendError);
+    }
 
-      // Fallback to browser TTS
+    // Only fall back to browser TTS if backend failed
+    if (!backendSucceeded) {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = lang;
       utterance.rate = 0.9;
@@ -366,9 +355,6 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
       
       synthRef.current = utterance;
       speechSynthesis.speak(utterance);
-    } catch (err) {
-      console.error('Speak error:', err);
-      setIsSpeaking(false);
     }
   }, [synthesizeSpeech]);
 

@@ -164,6 +164,10 @@ export function detectSpeech(
 
 /**
  * Create a WAV header for PCM audio data
+ * @param dataLength - Length of the audio data in bytes
+ * @param sampleRate - Sample rate in Hz
+ * @param numChannels - Number of audio channels (default: 1)
+ * @param bitsPerSample - Bits per sample, must be 8, 16, 24, or 32 (default: 16)
  */
 export function createWavHeader(
   dataLength: number,
@@ -171,6 +175,13 @@ export function createWavHeader(
   numChannels: number = 1,
   bitsPerSample: number = 16
 ): ArrayBuffer {
+  const supportedBitsPerSample = [8, 16, 24, 32];
+  if (!supportedBitsPerSample.includes(bitsPerSample)) {
+    throw new RangeError(
+      `Unsupported bitsPerSample value: ${bitsPerSample}. Supported values are ${supportedBitsPerSample.join(', ')}.`
+    );
+  }
+  
   const byteRate = sampleRate * numChannels * bitsPerSample / 8;
   const blockAlign = numChannels * bitsPerSample / 8;
   const header = new ArrayBuffer(44);
@@ -230,6 +241,8 @@ export function createWavBlob(
 
 /**
  * Concatenate multiple audio buffers
+ * Note: All buffers must have the same number of channels and sample rate
+ * @throws Error if buffers have mismatched configurations
  */
 export function concatenateAudioBuffers(
   ctx: AudioContext,
@@ -238,10 +251,24 @@ export function concatenateAudioBuffers(
   if (buffers.length === 0) return null;
   if (buffers.length === 1) return buffers[0];
 
-  const totalLength = buffers.reduce((sum, buf) => sum + buf.length, 0);
   const numChannels = buffers[0].numberOfChannels;
   const sampleRate = buffers[0].sampleRate;
+  
+  // Validate all buffers have matching configurations
+  for (let i = 1; i < buffers.length; i++) {
+    if (buffers[i].numberOfChannels !== numChannels) {
+      throw new Error(
+        `Buffer ${i} has ${buffers[i].numberOfChannels} channels, expected ${numChannels}`
+      );
+    }
+    if (buffers[i].sampleRate !== sampleRate) {
+      throw new Error(
+        `Buffer ${i} has sample rate ${buffers[i].sampleRate}, expected ${sampleRate}`
+      );
+    }
+  }
 
+  const totalLength = buffers.reduce((sum, buf) => sum + buf.length, 0);
   const result = ctx.createBuffer(numChannels, totalLength, sampleRate);
 
   for (let channel = 0; channel < numChannels; channel++) {
