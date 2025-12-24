@@ -248,7 +248,7 @@ app.post('/logs', async (c) => {
   if (!body) return;
   const id = crypto.randomUUID();
   const now = Date.now();
-  const duration = body.duration_seconds ?? (body as any).duration ?? 0;
+  const duration = body.duration_seconds ?? 0;
   await c.env.DB.prepare(`
     INSERT INTO call_logs (
       id, user_id, visitor_id, call_type, direction, duration_seconds, 
@@ -421,8 +421,8 @@ app.post('/reminders', async (c) => {
   const now = Date.now();
   await c.env.DB.prepare(`
     INSERT INTO reminders (
-      id, task_id, user_id, remind_at, channel, message, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      id, task_id, user_id, remind_at, channel, message, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
     body.task_id,
@@ -430,6 +430,7 @@ app.post('/reminders', async (c) => {
     body.remind_at,
     body.channel || 'in_app',
     body.message ?? null,
+    now,
     now
   ).run();
   await writeAudit(c.env, { action: 'create', resource_type: 'reminder', resource_id: id, changes: body, user_id: c.get('user')?.sub });
@@ -447,6 +448,8 @@ app.patch('/reminders/:id', async (c) => {
     values.push(v);
   }
   if (!fields.length) return jsonError(c, 'validation_error', 'No fields to update', 400);
+  fields.push('updated_at = ?');
+  values.push(Date.now());
   values.push(id);
   await c.env.DB.prepare(`UPDATE reminders SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
   await writeAudit(c.env, { action: 'update', resource_type: 'reminder', resource_id: id, changes: body, user_id: c.get('user')?.sub });
@@ -579,7 +582,7 @@ const appointmentCreateSchema = z.object({
   start_time: z.number().int(),
   end_time: z.number().int(),
   timezone: z.string(),
-  meeting_link: z.string().url().optional(),
+  meeting_link: z.union([z.string().url(), z.literal('')]).optional(),
   location: z.string().optional(),
   attendees: z.array(z.string()).optional(),
   reminders_sent: z.array(z.number()).optional(),
@@ -605,7 +608,6 @@ const callLogSchema = z.object({
   call_type: z.enum(['inbound', 'outbound', 'internal']).optional(),
   direction: z.enum(['incoming', 'outgoing']).optional(),
   duration_seconds: z.number().int().optional(),
-  duration: z.number().int().optional(),
   summary: z.string().optional(),
   sentiment: z.string().optional(),
   status: z.enum(['completed', 'missed', 'busy', 'failed', 'voicemail']).optional(),
@@ -626,8 +628,8 @@ const taskCreateSchema = z.object({
   description: z.string().optional(),
   status: z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
   priority: z.enum(['low', 'normal', 'high']).optional(),
-  due_date: z.number().int().optional().nullable(),
-  remind_at: z.number().int().optional().nullable(),
+  due_date: z.number().int().nullable().optional(),
+  remind_at: z.number().int().nullable().optional(),
 });
 const taskUpdateSchema = taskCreateSchema.partial();
 

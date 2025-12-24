@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   channel TEXT NOT NULL DEFAULT 'in_app' CHECK(channel IN ('in_app', 'email', 'sms')),
   message TEXT,
   created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
   FOREIGN KEY (task_id) REFERENCES tasks(id),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
