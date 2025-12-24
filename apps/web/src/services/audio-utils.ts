@@ -100,7 +100,8 @@ export function float32ToInt16(float32Array: Float32Array): Int16Array {
 export function int16ToFloat32(int16Array: Int16Array): Float32Array {
   const float32Array = new Float32Array(int16Array.length);
   for (let i = 0; i < int16Array.length; i++) {
-    float32Array[i] = int16Array[i] / 32768.0;
+    const sample = int16Array[i];
+    float32Array[i] = sample < 0 ? sample / 32768.0 : sample / 32767.0;
   }
   return float32Array;
 }
