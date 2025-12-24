@@ -105,3 +105,28 @@ export interface Visitor {
   tags?: string[];
   metadata?: Record<string, any>;
 }
+
+export interface Task {
+  id: string;
+  user_id: string;
+  visitor_id?: string | null;
+  title: string;
+  description?: string;
+  status: 'todo' | 'in_progress' | 'done' | 'cancelled';
+  priority: 'low' | 'normal' | 'high';
+  due_date?: number | null;
+  remind_at?: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Reminder {
+  id: string;
+  task_id: string;
+  user_id: string;
+  remind_at: number;
+  channel: 'in_app' | 'email' | 'sms';
+  message?: string;
+  created_at: number;
+  updated_at: number;
+}

@@ -217,3 +217,40 @@ CREATE TABLE IF NOT EXISTS analytics_events (
 CREATE INDEX idx_analytics_events_event_type ON analytics_events(event_type);
 CREATE INDEX idx_analytics_events_created_at ON analytics_events(created_at DESC);
 CREATE INDEX idx_analytics_events_visitor_id ON analytics_events(visitor_id);
+
+-- TASKS TABLE
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  visitor_id TEXT,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'done', 'cancelled')),
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high')),
+  due_date INTEGER,
+  remind_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (visitor_id) REFERENCES visitors(id)
+);
+CREATE INDEX idx_tasks_user_id ON tasks(user_id);
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_tasks_due_date ON tasks(due_date);
+
+-- REMINDERS TABLE
+CREATE TABLE IF NOT EXISTS reminders (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  remind_at INTEGER NOT NULL,
+  channel TEXT NOT NULL DEFAULT 'in_app' CHECK(channel IN ('in_app', 'email', 'sms')),
+  message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX idx_reminders_user_id ON reminders(user_id);
+CREATE INDEX idx_reminders_task_id ON reminders(task_id);
+CREATE INDEX idx_reminders_remind_at ON reminders(remind_at);
