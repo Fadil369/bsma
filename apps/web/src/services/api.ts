@@ -1,8 +1,48 @@
-import { Appointment, CallLog, Visitor, Lead, ProactiveTask } from '../types';
+import { Appointment, CallLog, Visitor } from '../types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 
+export interface STTResult {
+  text: string;
+  language?: string;
+}
+
+export interface TTSOptions {
+  voice?: string;
+  format?: 'wav' | 'mp3' | 'mulaw' | 'pcm';
+}
+
 export const api = {
+  // Speech-to-Text: transcribe audio
+  transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/wav'): Promise<STTResult> => {
+    const res = await fetch(`${API_URL}/stt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioBase64, mimeType }),
+    });
+    if (!res.ok) {
+      throw new Error(`STT failed: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  // Text-to-Speech: synthesize audio
+  synthesizeSpeech: async (text: string, options?: TTSOptions): Promise<Blob> => {
+    const res = await fetch(`${API_URL}/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        voice: options?.voice || 'alloy',
+        format: options?.format || 'mp3',
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`TTS failed: ${res.statusText}`);
+    }
+    return res.blob();
+  },
+
   getAppointments: async (): Promise<Appointment[]> => {
     const res = await fetch(`${API_URL}/appointments`);
     return res.json();

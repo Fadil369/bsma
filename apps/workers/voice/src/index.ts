@@ -53,26 +53,28 @@ class CallHandler {
   private callStartTime: number = Date.now();
   private connections: Set<WebSocket> = new Set();
   private aiService: AIService;
+  private meta: { rid: string; ip: string; ua: string } = { rid: '', ip: '', ua: '' };
 
   constructor(private env: Env) {
     this.aiService = new AIService(env.ANTHROPIC_API_KEY);
   }
 
-  async handleConnection(ws: WebSocket) {
+  async handleConnection(ws: WebSocket, meta: { rid: string; ip: string; ua: string }) {
     this.connections.add(ws);
+    this.meta = meta;
 
     ws.addEventListener('message', async (event) => {
       const data = JSON.parse(event.data as string);
 
       if (data.event === 'start') {
        this.callStartTime = Date.now();
-       log('info', 'twilio_stream_start', { rid: meta.rid, start: this.callStartTime });
+       log('info', 'twilio_stream_start', { rid: this.meta.rid, start: this.callStartTime });
      }
 
       if (data.event === 'media') {
        const audioPayload = base64ToUint8Array(data.media.payload);
        const userText = await this.transcribeAudio(audioPayload);
-       log('debug', 'transcribed_user_speech', { rid: meta.rid, text_len: userText?.length || 0 });
+       log('debug', 'transcribed_user_speech', { rid: this.meta.rid, text_len: userText?.length || 0 });
         
         if (userText) {
           this.conversationHistory.push({
@@ -112,7 +114,7 @@ class CallHandler {
 
       if (data.event === 'stop') {
        await this.saveCallLog();
-       log('info', 'twilio_stream_stop', { rid: meta.rid });
+       log('info', 'twilio_stream_stop', { rid: this.meta.rid });
        ws.close();
      }
     });
@@ -120,7 +122,7 @@ class CallHandler {
     ws.addEventListener('close', async () => {
      this.connections.delete(ws);
      await this.saveCallLog();
-     log('info', 'twilio_ws_close', { rid: meta.rid });
+     log('info', 'twilio_ws_close', { rid: this.meta.rid });
    });
 
     ws.accept();
@@ -136,7 +138,7 @@ class CallHandler {
     }
   }
 
-  private async saveCallLog(meta?: { rid?: string; ip?: string; ua?: string }) {
+  private async saveCallLog() {
     const duration = Math.floor((Date.now() - this.callStartTime) / 1000);
     const transcript = this.conversationHistory.map(m => 
       `${m.role}: ${m.content}`
@@ -166,7 +168,7 @@ class CallHandler {
      JSON.stringify(this.extractActionItems()),
      Date.now()
    ).run();
-   await writeAudit(this.env, { action: 'create', resource_type: 'call_log', resource_id: id, changes: { duration, summary, sentiment }, ip_address: meta?.ip, user_agent: meta?.ua });
+   await writeAudit(this.env, { action: 'create', resource_type: 'call_log', resource_id: id, changes: { duration, summary, sentiment }, ip_address: this.meta.ip, user_agent: this.meta.ua });
 
     if (this.visitorData.phone || this.visitorData.email) {
       await this.upsertVisitor();
@@ -231,7 +233,6 @@ class CallHandler {
 
       this.visitorData.visitorId = newId;
     }
-  }
   }
 
   private async streamFrames(ws: WebSocket, frames: Uint8Array[]) {
