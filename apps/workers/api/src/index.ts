@@ -98,7 +98,7 @@ app.get('/appointments/:id', async (c) => {
 
 app.post('/appointments', async (c) => {
   const body = await parseBody(c, appointmentCreateSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const id = crypto.randomUUID();
   const now = Date.now();
 
@@ -133,7 +133,7 @@ app.post('/appointments', async (c) => {
 app.patch('/appointments/:id', async (c) => {
   const id = c.req.param('id');
   const body = await parseBody(c, appointmentUpdateSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const fields: string[] = [];
   const values: any[] = [];
   for (const [k, v] of Object.entries(body)) {
@@ -187,7 +187,7 @@ app.get('/visitors', async (c) => {
 
 app.post('/visitors', async (c) => {
   const body = await parseBody(c, visitorSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const id = body.id || crypto.randomUUID();
   const now = Date.now();
   
@@ -247,7 +247,7 @@ app.get('/logs', async (c) => {
 
 app.post('/logs', async (c) => {
   const body = await parseBody(c, callLogSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const id = crypto.randomUUID();
   const now = Date.now();
   const duration = body.duration_seconds ?? 0;
@@ -280,7 +280,7 @@ app.post('/logs', async (c) => {
 // Messages (WhatsApp/SMS) -- Mock sending, just store
 app.post('/messages', async (c) => {
   const body = await parseBody(c, messageSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const id = crypto.randomUUID();
   const now = Date.now();
   
@@ -350,7 +350,7 @@ app.get('/tasks', async (c) => {
 
 app.post('/tasks', async (c) => {
   const body = await parseBody(c, taskCreateSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const id = crypto.randomUUID();
   const now = Date.now();
   await c.env.DB.prepare(`
@@ -377,7 +377,7 @@ app.post('/tasks', async (c) => {
 app.patch('/tasks/:id', async (c) => {
   const id = c.req.param('id');
   const body = await parseBody(c, taskUpdateSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const fields: string[] = [];
   const values: any[] = [];
   for (const [k, v] of Object.entries(body)) {
@@ -418,7 +418,7 @@ app.get('/reminders', async (c) => {
 
 app.post('/reminders', async (c) => {
   const body = await parseBody(c, reminderCreateSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const id = crypto.randomUUID();
   const now = Date.now();
   await c.env.DB.prepare(`
@@ -442,7 +442,7 @@ app.post('/reminders', async (c) => {
 app.patch('/reminders/:id', async (c) => {
   const id = c.req.param('id');
   const body = await parseBody(c, reminderUpdateSchema);
-  if (!body) return;
+  if (body instanceof Response) return body;
   const fields: string[] = [];
   const values: any[] = [];
   for (const [k, v] of Object.entries(body)) {
@@ -511,18 +511,16 @@ function getPagination(c: AppContext) {
   return { limit, offset };
 }
 
-async function parseBody<T>(c: AppContext, schema: z.ZodSchema<T>): Promise<T | null> {
+async function parseBody<T>(c: AppContext, schema: z.ZodSchema<T>): Promise<T | Response> {
   try {
     const json = await c.req.json();
     const parsed = schema.parse(json);
     return parsed;
   } catch (err) {
     if (err instanceof ZodError) {
-      jsonError(c, 'validation_error', 'Invalid request body', 400, err.flatten());
-      return null;
+      return jsonError(c, 'validation_error', 'Invalid request body', 400, err.flatten());
     }
-    jsonError(c, 'validation_error', 'Invalid JSON body', 400);
-    return null;
+    return jsonError(c, 'validation_error', 'Invalid JSON body', 400);
   }
 }
 
@@ -552,7 +550,12 @@ async function verifyJwt(token: string, secret: string): Promise<AuthUser> {
   );
   if (!valid) throw new Error('Invalid signature');
 
-  const payload = JSON.parse(base64UrlDecode(payloadB64));
+  let payload: AuthUser & { exp?: number };
+  try {
+    payload = JSON.parse(base64UrlDecode(payloadB64));
+  } catch (e) {
+    throw new Error('Invalid token payload');
+  }
   if (payload.exp && Date.now() >= payload.exp * 1000) {
     throw new Error('Token expired');
   }
@@ -562,7 +565,11 @@ async function verifyJwt(token: string, secret: string): Promise<AuthUser> {
 function base64UrlDecode(str: string): string {
   const pad = str.length % 4 === 0 ? '' : '='.repeat(4 - (str.length % 4));
   const normalized = (str + pad).replace(/-/g, '+').replace(/_/g, '/');
-  return atob(normalized);
+  try {
+    return atob(normalized);
+  } catch (e) {
+    throw new Error('Invalid base64 encoding');
+  }
 }
 
 function base64UrlToUint8Array(str: string): Uint8Array {
@@ -583,10 +590,7 @@ const appointmentCreateSchema = z.object({
   start_time: z.number().int(),
   end_time: z.number().int(),
   timezone: z.string(),
-  meeting_link: z.union([
-    z.string().url(),
-    z.literal('').transform(() => undefined),
-  ]).optional(),
+  meeting_link: z.string().url().optional(),
   location: z.string().optional(),
   attendees: z.array(z.string()).optional(),
   reminders_sent: z.array(z.number()).optional(),
