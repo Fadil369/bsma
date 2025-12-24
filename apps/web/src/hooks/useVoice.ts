@@ -112,7 +112,7 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
     
     setAudioLevel(normalizedLevel);
     animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
-  }, [isListening]);
+  }, []);
 
   // STT API call - transcribe audio blob via backend
   const transcribeAudio = useCallback(async (audioBlob: Blob): Promise<string> => {
