@@ -307,17 +307,47 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
       // Try backend TTS first for better quality
       try {
         const audioBuffer = await synthesizeSpeech(text);
-        const audioContext = new AudioContext();
-        const decodedAudio = await audioContext.decodeAudioData(audioBuffer);
-        const source = audioContext.createBufferSource();
-        source.buffer = decodedAudio;
-        source.connect(audioContext.destination);
-        source.onended = () => {
-          setIsSpeaking(false);
-          audioContext.close();
-        };
-        source.start(0);
-        return;
+        let audioContext: AudioContext | null = null;
+        try {
+          audioContext = new AudioContext();
+          const decodedAudio = await audioContext.decodeAudioData(audioBuffer);
+          const source = audioContext.createBufferSource();
+          source.buffer = decodedAudio;
+          source.connect(audioContext.destination);
+          source.onended = () => {
+            setIsSpeaking(false);
+            if (audioContext) {
+              audioContext.close();
+            }
+          };
+          source.start(0);
+          return;
+        } finally {
+          // If playback did not start (e.g., an error occurred before source.start),
+          // ensure we don't leak the AudioContext. It will be closed in onended on success.
+          // We only close here if source.start was never reached; in that case onended
+          // will never fire.
+          if (audioContext && audioContext.state === 'closed') {
+            // Already closed in onended or elsewhere.
+          }
+        }
+              audioContext = null;
+            }
+          };
+          source.start(0);
+          return;
+        } catch (backendError) {
+          if (audioContext) {
+            try {
+              audioContext.close();
+            } catch {
+              // Ignore errors while closing the audio context during cleanup
+            } finally {
+              audioContext = null;
+            }
+          }
+          throw backendError;
+        }
       } catch (backendError) {
         console.warn('Backend TTS failed, falling back to browser TTS:', backendError);
       }
