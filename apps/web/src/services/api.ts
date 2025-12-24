@@ -1,8 +1,65 @@
-import { Appointment, CallLog, Visitor, Lead, ProactiveTask } from '../types';
+import { Appointment, CallLog, Visitor } from '../types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 
+export interface STTResult {
+  text: string;
+  language?: string;
+}
+
+export interface TTSOptions {
+  voice?: string;
+  format?: 'wav' | 'mp3' | 'mulaw' | 'pcm';
+}
+
+// Helper function to extract detailed error message from response
+async function extractErrorMessage(res: Response, fallbackPrefix: string): Promise<string> {
+  try {
+    const contentType = res.headers.get('content-type');
+    if (contentType?.includes('application/json')) {
+      const errorData = await res.json();
+      return errorData.message || errorData.error || `${fallbackPrefix}: ${res.statusText}`;
+    }
+    const textError = await res.text();
+    return textError || `${fallbackPrefix}: ${res.statusText}`;
+  } catch {
+    return `${fallbackPrefix}: ${res.statusText}`;
+  }
+}
+
 export const api = {
+  // Speech-to-Text: transcribe audio
+  transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/wav'): Promise<STTResult> => {
+    const res = await fetch(`${API_URL}/stt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioBase64, mimeType }),
+    });
+    if (!res.ok) {
+      const errorMessage = await extractErrorMessage(res, 'STT failed');
+      throw new Error(errorMessage);
+    }
+    return res.json();
+  },
+
+  // Text-to-Speech: synthesize audio
+  synthesizeSpeech: async (text: string, options?: TTSOptions): Promise<Blob> => {
+    const res = await fetch(`${API_URL}/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        voice: options?.voice || 'alloy',
+        format: options?.format || 'mp3',
+      }),
+    });
+    if (!res.ok) {
+      const errorMessage = await extractErrorMessage(res, 'TTS failed');
+      throw new Error(errorMessage);
+    }
+    return res.blob();
+  },
+
   getAppointments: async (): Promise<Appointment[]> => {
     const res = await fetch(`${API_URL}/appointments`);
     return res.json();
