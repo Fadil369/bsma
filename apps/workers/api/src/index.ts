@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { z, ZodError } from 'zod';
 import type { Env } from '@basma/shared/types';
@@ -6,6 +7,7 @@ import { transcribeAudio, synthesizeSpeech } from '@basma/shared/speech';
 import { createRequestId, log, writeAudit } from '@basma/shared/logger';
 
 type AuthUser = { sub: string; role?: string; email?: string };
+type AppContext = Context<{ Bindings: Env; Variables: { rid: string; user?: AuthUser } }>;
 
 const app = new Hono<{ Bindings: Env; Variables: { rid: string; user?: AuthUser } }>();
 app.use('/*', cors());
@@ -449,8 +451,7 @@ app.patch('/reminders/:id', async (c) => {
   }
   if (!fields.length) return jsonError(c, 'validation_error', 'No fields to update', 400);
   fields.push('updated_at = ?');
-  values.push(Date.now());
-  values.push(id);
+  values.push(Date.now(), id);
   await c.env.DB.prepare(`UPDATE reminders SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
   await writeAudit(c.env, { action: 'update', resource_type: 'reminder', resource_id: id, changes: body, user_id: c.get('user')?.sub });
   return c.json({ id });
@@ -503,14 +504,14 @@ function contentTypeForFormat(format: string): string {
   }
 }
 
-function getPagination(c: any) {
+function getPagination(c: AppContext) {
   const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '20', 10), 1), 100);
   const page = Math.max(parseInt(c.req.query('page') || '1', 10), 1);
   const offset = (page - 1) * limit;
   return { limit, offset };
 }
 
-async function parseBody<T>(c: any, schema: z.ZodSchema<T>): Promise<T | null> {
+async function parseBody<T>(c: AppContext, schema: z.ZodSchema<T>): Promise<T | null> {
   try {
     const json = await c.req.json();
     const parsed = schema.parse(json);
@@ -525,7 +526,7 @@ async function parseBody<T>(c: any, schema: z.ZodSchema<T>): Promise<T | null> {
   }
 }
 
-function jsonError(c: any, code: string, message: string, status = 400, details?: any) {
+function jsonError(c: AppContext, code: string, message: string, status = 400, details?: any) {
   return c.json({ error: code, message, details }, status);
 }
 
@@ -582,7 +583,10 @@ const appointmentCreateSchema = z.object({
   start_time: z.number().int(),
   end_time: z.number().int(),
   timezone: z.string(),
-  meeting_link: z.union([z.string().url(), z.literal('')]).optional(),
+  meeting_link: z.union([
+    z.string().url(),
+    z.literal('').transform(() => undefined),
+  ]).optional(),
   location: z.string().optional(),
   attendees: z.array(z.string()).optional(),
   reminders_sent: z.array(z.number()).optional(),

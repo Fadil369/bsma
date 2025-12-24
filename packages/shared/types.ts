@@ -128,4 +128,5 @@ export interface Reminder {
   channel: 'in_app' | 'email' | 'sms';
   message?: string;
   created_at: number;
+  updated_at: number;
 }
