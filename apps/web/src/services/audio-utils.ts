@@ -47,8 +47,23 @@ export async function decodeAudioData(
   numChannels: number,
 ): Promise<AudioBuffer> {
   try {
+    // Validate data length for proper Int16 alignment
+    if (data.byteLength % 2 !== 0) {
+      throw new Error('Audio data length must be a multiple of 2 for Int16 samples');
+    }
+    
     const dataInt16 = new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2);
+    
+    // Validate that we have complete frames
+    if (dataInt16.length % numChannels !== 0) {
+      console.warn('Audio data does not contain complete frames, truncating');
+    }
+    
     const frameCount = Math.floor(dataInt16.length / numChannels);
+    if (frameCount === 0) {
+      return ctx.createBuffer(numChannels, 1, sampleRate);
+    }
+    
     const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
 
     for (let channel = 0; channel < numChannels; channel++) {
@@ -183,6 +198,10 @@ export function createWavHeader(
 }
 
 function writeString(view: DataView, offset: number, str: string): void {
+  // Validate buffer bounds
+  if (offset + str.length > view.byteLength) {
+    throw new Error(`String "${str}" exceeds buffer at offset ${offset}`);
+  }
   for (let i = 0; i < str.length; i++) {
     view.setUint8(offset + i, str.charCodeAt(i));
   }

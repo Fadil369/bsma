@@ -62,21 +62,43 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  
+  // Refs to track current state for use in callbacks (avoid stale closures)
+  const isListeningRef = useRef(isListening);
+  const connectionStateRef = useRef(connectionState);
+  
+  // Keep refs in sync with state
+  useEffect(() => {
+    isListeningRef.current = isListening;
+    connectionStateRef.current = connectionState;
+  }, [isListening, connectionState]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopListening();
-      stopSpeaking();
+      // Use direct cleanup instead of calling hooks
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+        recognitionRef.current = null;
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track: MediaStreamTrack) => track.stop());
+        mediaStreamRef.current = null;
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
+      speechSynthesis.cancel();
     };
   }, []);
 
   // Audio level monitoring
   const updateAudioLevel = useCallback(() => {
-    if (!analyserRef.current || !isListening) {
+    if (!analyserRef.current || !isListeningRef.current) {
       setAudioLevel(0);
       return;
     }
@@ -96,9 +118,16 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
   const transcribeAudio = useCallback(async (audioBlob: Blob): Promise<string> => {
     try {
       const arrayBuffer = await audioBlob.arrayBuffer();
-      const base64 = btoa(
-        new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-      );
+      const bytes = new Uint8Array(arrayBuffer);
+      
+      // Use chunked base64 encoding for better performance with large audio files
+      let base64 = '';
+      const chunkSize = 32768; // Process 32KB at a time
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+        base64 += String.fromCharCode.apply(null, Array.from(chunk));
+      }
+      base64 = btoa(base64);
 
       const response = await fetch(`${mergedConfig.apiUrl}/stt`, {
         method: 'POST',
@@ -222,8 +251,8 @@ export function useVoice(config?: Partial<VoiceConfig>): UseVoiceReturn {
       };
 
       recognition.onend = () => {
-        // Auto-restart if still listening (handle timeout)
-        if (isListening && connectionState === 'active') {
+        // Auto-restart if still listening (use refs to avoid stale closures)
+        if (isListeningRef.current && connectionStateRef.current === 'active') {
           try {
             recognition.start();
           } catch {

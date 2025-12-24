@@ -30,7 +30,17 @@ export const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   
+  // Refs to track current state for use in callbacks (avoid stale closures)
+  const isListeningRef = useRef(isListening);
+  const connectionStatusRef = useRef(connectionStatus);
+  
   const { translateToSaudiDialect, formatArabicText } = useSaudiLanguage();
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    isListeningRef.current = isListening;
+    connectionStatusRef.current = connectionStatus;
+  }, [isListening, connectionStatus]);
 
   // Cleanup audio level monitoring
   const stopAudioLevelMonitoring = useCallback(() => {
@@ -137,8 +147,8 @@ export const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
       };
 
       recognition.onend = () => {
-        // Auto-restart if still supposed to be listening
-        if (isListening && connectionStatus === 'active') {
+        // Auto-restart if still supposed to be listening (use refs to avoid stale closures)
+        if (isListeningRef.current && connectionStatusRef.current === 'active') {
           try {
             recognition.start();
           } catch {
@@ -382,17 +392,18 @@ export const VoiceInterface: React.FC<VoiceInterfaceProps> = ({
   );
 };
 
+// Pre-calculate sine values for visualizer bars to avoid recalculation on every render
+const BARS_COUNT = 20;
+const PRE_CALC_SINE = Array.from({ length: BARS_COUNT }, (_, i) => Math.sin(i * 0.5) * 10 + 10);
+const PRE_CALC_DISTANCE = Array.from({ length: BARS_COUNT }, (_, i) => Math.abs(i - BARS_COUNT / 2) / (BARS_COUNT / 2));
+
 const AudioVisualizer: React.FC<{ isActive: boolean; level: number }> = ({ isActive, level }) => {
-  // Use level to create more dynamic visualization
-  const bars = 20;
   return (
     <div className="flex items-center justify-center gap-1 h-full w-full py-10">
-      {[...Array(bars)].map((_, i) => {
-        // Create wave pattern based on level and position
-        const distanceFromCenter = Math.abs(i - bars / 2) / (bars / 2);
-        const baseHeight = isActive ? 20 + (1 - distanceFromCenter) * level * 60 : 10;
-        // Use index-based variation instead of random to avoid purity issues
-        const indexVariation = isActive ? (Math.sin(i * 0.5) * 10 + 10) * level : 0;
+      {PRE_CALC_SINE.map((sineValue, i) => {
+        // Create wave pattern based on level and position using pre-calculated values
+        const baseHeight = isActive ? 20 + (1 - PRE_CALC_DISTANCE[i]) * level * 60 : 10;
+        const indexVariation = isActive ? sineValue * level : 0;
         
         return (
           <div 
