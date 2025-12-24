@@ -8,6 +8,11 @@ import { createRequestId, log, writeAudit } from '@basma/shared/logger';
 
 type AuthUser = { sub: string; role?: string; email?: string };
 type AppContext = Context<{ Bindings: Env; Variables: { rid: string; user?: AuthUser } }>;
+const PUBLIC_PATHS: readonly string[] = ['/health', '/version', '/time', '/stt', '/tts'];
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+const MIN_PAGE = 1;
+const MIN_LIMIT = 1;
 
 const app = new Hono<{ Bindings: Env; Variables: { rid: string; user?: AuthUser } }>();
 app.use('/*', cors());
@@ -26,10 +31,9 @@ app.use('*', async (c, next) => {
 });
 
 // JWT Auth middleware with role support
-const publicPaths = ['/health', '/version', '/time', '/stt', '/tts'];
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  if (publicPaths.includes(path)) {
+  if (PUBLIC_PATHS.includes(path)) {
     return next();
   }
   const auth = c.req.header('authorization');
@@ -66,6 +70,7 @@ app.get('/appointments', async (c) => {
   const status = c.req.query('status');
   const search = c.req.query('search');
   const { limit, offset } = getPagination(c);
+  const safeSearch = search ? escapeLike(search) : null;
 
   const where: string[] = [];
   const params: any[] = [];
@@ -77,9 +82,10 @@ app.get('/appointments', async (c) => {
     where.push('status = ?');
     params.push(status);
   }
-  if (search) {
-    where.push('(title LIKE ? OR coalesce(description, \"\") LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`);
+  if (safeSearch) {
+    const like = `%${safeSearch}%`;
+    where.push(`(title LIKE ? ESCAPE '\\\\' OR coalesce(description, "") LIKE ? ESCAPE '\\\\')`);
+    params.push(like, like);
   }
 
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -162,6 +168,7 @@ app.get('/visitors', async (c) => {
   const status = c.req.query('status');
   const search = c.req.query('search');
   const { limit, offset } = getPagination(c);
+  const safeSearch = search ? escapeLike(search) : null;
 
   const where: string[] = [];
   const params: any[] = [];
@@ -173,9 +180,10 @@ app.get('/visitors', async (c) => {
     where.push('status = ?');
     params.push(status);
   }
-  if (search) {
-    where.push('(coalesce(name, \"\") LIKE ? OR coalesce(email, \"\") LIKE ? OR coalesce(phone, \"\") LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  if (safeSearch) {
+    const like = `%${safeSearch}%`;
+    where.push('(coalesce(name, "") LIKE ? ESCAPE \'\\\\\' OR coalesce(email, "") LIKE ? ESCAPE \'\\\\\' OR coalesce(phone, "") LIKE ? ESCAPE \'\\\\\')');
+    params.push(like, like, like);
   }
 
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -214,7 +222,7 @@ app.post('/visitors', async (c) => {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
   `).bind(
     id,
-    body.user_id || 'system', // Default to system user if not provided
+    body.user_id || getActorId(c),
     body.name || null,
     body.phone || null,
     body.email || null,
@@ -258,7 +266,7 @@ app.post('/logs', async (c) => {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
-    body.user_id || 'system',
+    body.user_id || getActorId(c),
     body.visitor_id,
     body.call_type || 'inbound',
     body.direction || 'incoming',
@@ -326,6 +334,7 @@ app.get('/tasks', async (c) => {
   const status = c.req.query('status');
   const search = c.req.query('search');
   const { limit, offset } = getPagination(c);
+  const safeSearch = search ? escapeLike(search) : null;
 
   const where: string[] = [];
   const params: any[] = [];
@@ -337,9 +346,10 @@ app.get('/tasks', async (c) => {
     where.push('status = ?');
     params.push(status);
   }
-  if (search) {
-    where.push('(title LIKE ? OR coalesce(description, \"\") LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`);
+  if (safeSearch) {
+    const like = `%${safeSearch}%`;
+    where.push(`(title LIKE ? ESCAPE '\\\\' OR coalesce(description, "") LIKE ? ESCAPE '\\\\')`);
+    params.push(like, like);
   }
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const result = await c.env.DB.prepare(
@@ -359,7 +369,7 @@ app.post('/tasks', async (c) => {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
-    body.user_id || c.get('user')?.sub || 'system',
+    body.user_id || getActorId(c),
     body.visitor_id ?? null,
     body.title,
     body.description ?? null,
@@ -428,7 +438,7 @@ app.post('/reminders', async (c) => {
   `).bind(
     id,
     body.task_id,
-    body.user_id || c.get('user')?.sub || 'system',
+    body.user_id || getActorId(c),
     body.remind_at,
     body.channel || 'in_app',
     body.message ?? null,
@@ -504,9 +514,17 @@ function contentTypeForFormat(format: string): string {
   }
 }
 
+function getActorId(c: AppContext) {
+  return c.get('user')?.sub || 'system';
+}
+
+function escapeLike(term: string) {
+  return term.replace(/([%_\\])/g, '\\$1');
+}
+
 function getPagination(c: AppContext) {
-  const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '20', 10), 1), 100);
-  const page = Math.max(parseInt(c.req.query('page') || '1', 10), 1);
+  const limit = Math.min(Math.max(parseInt(c.req.query('limit') || String(DEFAULT_LIMIT), 10), MIN_LIMIT), MAX_LIMIT);
+  const page = Math.max(parseInt(c.req.query('page') || String(MIN_PAGE), 10), MIN_PAGE);
   const offset = (page - 1) * limit;
   return { limit, offset };
 }
@@ -533,6 +551,15 @@ async function verifyJwt(token: string, secret: string): Promise<AuthUser> {
   if (parts.length !== 3) throw new Error('Malformed token');
   const [headerB64, payloadB64, sigB64] = parts;
   const data = `${headerB64}.${payloadB64}`;
+
+  let header: { alg?: string; typ?: string };
+  try {
+    header = JSON.parse(base64UrlDecode(headerB64));
+  } catch {
+    throw new Error('Invalid token header');
+  }
+  if (header.typ && header.typ !== 'JWT') throw new Error('Invalid token type');
+  if (header.alg && header.alg !== 'HS256') throw new Error('Unsupported signing algorithm');
 
   const key = await crypto.subtle.importKey(
     'raw',
@@ -590,7 +617,7 @@ const appointmentCreateSchema = z.object({
   start_time: z.number().int(),
   end_time: z.number().int(),
   timezone: z.string(),
-  meeting_link: z.string().url().optional(),
+  meeting_link: z.string().url().nullable().optional(),
   location: z.string().optional(),
   attendees: z.array(z.string()).optional(),
   reminders_sent: z.array(z.number()).optional(),
