@@ -70,7 +70,6 @@ app.get('/appointments', async (c) => {
   const status = c.req.query('status');
   const search = c.req.query('search');
   const { limit, offset } = getPagination(c);
-  const safeSearch = search ? escapeLike(search) : null;
 
   const where: string[] = [];
   const params: any[] = [];
@@ -82,11 +81,7 @@ app.get('/appointments', async (c) => {
     where.push('status = ?');
     params.push(status);
   }
-  if (safeSearch) {
-    const like = `%${safeSearch}%`;
-    where.push(`(title LIKE ? ESCAPE '\\\\' OR coalesce(description, "") LIKE ? ESCAPE '\\\\')`);
-    params.push(like, like);
-  }
+  applyLikeSearch(where, params, ['title', 'coalesce(description, "")'], search);
 
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const result = await c.env.DB.prepare(
@@ -168,7 +163,6 @@ app.get('/visitors', async (c) => {
   const status = c.req.query('status');
   const search = c.req.query('search');
   const { limit, offset } = getPagination(c);
-  const safeSearch = search ? escapeLike(search) : null;
 
   const where: string[] = [];
   const params: any[] = [];
@@ -180,11 +174,7 @@ app.get('/visitors', async (c) => {
     where.push('status = ?');
     params.push(status);
   }
-  if (safeSearch) {
-    const like = `%${safeSearch}%`;
-    where.push('(coalesce(name, "") LIKE ? ESCAPE \'\\\\\' OR coalesce(email, "") LIKE ? ESCAPE \'\\\\\' OR coalesce(phone, "") LIKE ? ESCAPE \'\\\\\')');
-    params.push(like, like, like);
-  }
+  applyLikeSearch(where, params, ['coalesce(name, "")', 'coalesce(email, "")', 'coalesce(phone, "")'], search);
 
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const result = await c.env.DB.prepare(
@@ -334,7 +324,6 @@ app.get('/tasks', async (c) => {
   const status = c.req.query('status');
   const search = c.req.query('search');
   const { limit, offset } = getPagination(c);
-  const safeSearch = search ? escapeLike(search) : null;
 
   const where: string[] = [];
   const params: any[] = [];
@@ -346,11 +335,7 @@ app.get('/tasks', async (c) => {
     where.push('status = ?');
     params.push(status);
   }
-  if (safeSearch) {
-    const like = `%${safeSearch}%`;
-    where.push(`(title LIKE ? ESCAPE '\\\\' OR coalesce(description, "") LIKE ? ESCAPE '\\\\')`);
-    params.push(like, like);
-  }
+  applyLikeSearch(where, params, ['title', 'coalesce(description, "")'], search);
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const result = await c.env.DB.prepare(
     `SELECT * FROM tasks ${whereClause} ORDER BY due_date IS NULL, due_date ASC LIMIT ? OFFSET ?`
@@ -522,6 +507,14 @@ function escapeLike(term: string) {
   return term.replace(/([%_\\])/g, '\\$1');
 }
 
+function applyLikeSearch(where: string[], params: any[], columns: string[], term?: string | null) {
+  if (!term) return;
+  const like = `%${escapeLike(term)}%`;
+  const clause = columns.map((col) => `${col} LIKE ? ESCAPE '\\\\'`).join(' OR ');
+  where.push(`(${clause})`);
+  params.push(...columns.map(() => like));
+}
+
 function getPagination(c: AppContext) {
   const limit = Math.min(Math.max(parseInt(c.req.query('limit') || String(DEFAULT_LIMIT), 10), MIN_LIMIT), MAX_LIMIT);
   const page = Math.max(parseInt(c.req.query('page') || String(MIN_PAGE), 10), MIN_PAGE);
@@ -559,7 +552,7 @@ async function verifyJwt(token: string, secret: string): Promise<AuthUser> {
     throw new Error('Invalid token header');
   }
   if (header.typ && header.typ !== 'JWT') throw new Error('Invalid token type');
-  if (header.alg && header.alg !== 'HS256') throw new Error('Unsupported signing algorithm');
+  if (header.alg !== 'HS256') throw new Error('Unsupported signing algorithm');
 
   const key = await crypto.subtle.importKey(
     'raw',
@@ -594,7 +587,7 @@ function base64UrlDecode(str: string): string {
   const normalized = (str + pad).replace(/-/g, '+').replace(/_/g, '/');
   try {
     return atob(normalized);
-  } catch (e) {
+  } catch (_err) {
     throw new Error('Invalid base64 encoding');
   }
 }
@@ -614,10 +607,10 @@ const appointmentCreateSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   type: z.string(),
-  start_time: z.number().int(),
-  end_time: z.number().int(),
+  start_time: z.number(),
+  end_time: z.number(),
   timezone: z.string(),
-  meeting_link: z.string().url().nullable().optional(),
+  meeting_link: z.string().url().optional().nullable(),
   location: z.string().optional(),
   attendees: z.array(z.string()).optional(),
   reminders_sent: z.array(z.number()).optional(),
@@ -663,15 +656,15 @@ const taskCreateSchema = z.object({
   description: z.string().optional(),
   status: z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
   priority: z.enum(['low', 'normal', 'high']).optional(),
-  due_date: z.number().int().nullable().optional(),
-  remind_at: z.number().int().nullable().optional(),
+  due_date: z.number().nullable().optional(),
+  remind_at: z.number().nullable().optional(),
 });
 const taskUpdateSchema = taskCreateSchema.partial();
 
 const reminderCreateSchema = z.object({
   task_id: z.string(),
   user_id: z.string().optional(),
-  remind_at: z.number().int(),
+  remind_at: z.number(),
   channel: z.enum(['in_app', 'email', 'sms']).optional(),
   message: z.string().optional(),
 });
